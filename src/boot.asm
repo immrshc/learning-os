@@ -50,8 +50,30 @@ BOOT:
 	times 510 - ($ - $$) db 0x00
 	db 0x55, 0xAA
 
+; リアルモード時に取得した情報
+FONT:
+.seg dw 0
+.off dw 0
+
 ; モジュール（先頭512バイト以降で利用）
 %include	"./src/modules/real/itoa.asm"
+%include	"./src/modules/real/get_font_adr.asm"
+
+stage_2:
+	cdecl puts, .s0
+	; BIOSに内蔵されたフォントをプロテクトモード時に利用する
+	cdecl get_font_adr, FONT
+	; フォントアドレスの表示
+	cdecl itoa, word [FONT.seg], .p1, 4, 16, 0b0100
+	cdecl itoa, word [FONT.off], .p2, 4, 16, 0b0100
+	cdecl puts, .s1
+	jmp stage_3
+
+.s0 db "2nd stage...", 0x0A, 0x0D, 0
+.s1: db " Font Address = "
+.p1: db "ZZZZ:"
+.p2: db "ZZZZ", 0x0A, 0x0D, 0
+	db 0x0A, 0x0D, 0
 
 ALIGN 4, db 0
 GDT: dq	0x00_0_0_0_0_000000_0000 ; NULL
@@ -71,7 +93,7 @@ GDTR: dw GDT.gdt_end - GDT - 1 ; ディスクリプタテーブルのリミッ�
 IDTR: dw 0 ; idt_limit
 	 dd 0 ; idt location
 
-stage_2:
+stage_3:
 	cdecl puts, .s0
 	cli
 
@@ -90,7 +112,7 @@ stage_2:
 	DB 0x66 ; オペランドサイズオーバーライドプレフィックス
 	jmp SEL_CODE:CODE_32
 
-.s0 db "2nd stage...", 0x0A, 0x0D, 0
+.s0 db "3rd stage...", 0x0A, 0x0D, 0
 
 ; 32ビットコード開始
 CODE_32:
