@@ -17,3 +17,24 @@ struc drive
 	.head resw 1 ; H:ヘッド
 	.sect resw 1 ; S:セクタ
 endstruc
+
+; 割り込みベクタ設定用
+; set_vect ベクタ番号, 割り込み処理 [, フラグ]
+%macro  set_vect 1-*.nolist
+	push	eax
+	push	edi
+
+	mov		edi, VECT_BASE + (%1 * 8) ; ベクタアドレス;
+	mov		eax, %2
+
+	%if 3 == %0
+		mov		[edi + 4], %3 ; フラグ
+	%endif
+
+	mov		[edi + 0], ax ; 例外アドレス[15: 0]
+	shr		eax, 16
+	mov		[edi + 6], ax ; 例外アドレス[31:16]
+
+	pop		edi
+	pop		eax
+%endmacro

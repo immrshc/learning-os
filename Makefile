@@ -1,5 +1,6 @@
 .PHONY: build build.kernel boot clean execute execute.kernel
 
+ASM_FILE ?= "./src/boot.asm"
 ASM_DIR_PATH := $(shell dirname $(ASM_FILE))
 ASM_BASE_PATH := $(ASM_DIR_PATH)/$(shell basename $(ASM_FILE) .asm)
 
