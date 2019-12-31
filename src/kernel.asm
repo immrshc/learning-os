@@ -31,13 +31,29 @@ kernel:
 	cdecl draw_char, 0, 0, 0x0402, '0' ; column, row, color, char
 	cdecl draw_char, 1, 0, 0x0212, '1' ; column, row, color, char
 	cdecl draw_char, 2, 0, 0x0212, '_' ; column, row, color, char
+	; 文字列の表示
+	cdecl draw_str, 25, 14, 0x010F, .s0
+
+	; 時刻の表示
+.10L:
+	cdecl rtc_get_time, RTC_TIME
+	cdecl draw_time, 72, 0, 0x0700, dword [RTC_TIME]
+	jmp .10L
+
 	jmp $
+
+.s0:	db	" Hello, kernel! ", 0
 
 ALIGN 4, db 0
 FONT_ADR: dd 0
+RTC_TIME: dd 0
 
 ; モジュール
 %include "./src/modules/protect/vga.asm"
+%include "./src/modules/protect/itoa.asm"
+%include "./src/modules/protect/rtc.asm"
 %include "./src/modules/protect/draw_char.asm"
+%include "./src/modules/protect/draw_str.asm"
+%include "./src/modules/protect/draw_time.asm"
 
 	times KERNEL_SIZE - ($ - $$) db 0
