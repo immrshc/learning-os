@@ -16,17 +16,14 @@ ipl:
 	mov sp, BOOT_LOAD
 
 	sti ; 割り込み許可
-	mov [BOOT.DRIVE], dl ; ブートドライブを保存
+	mov [BOOT + drive.no], dl ; ブートドライブを保存
 	cdecl puts, .s0
 
-	; 次の512バイトを読み込む
-	mov ah, 0x02
-	mov al, BOOT_SECT - 1 ; 残りのブートプログラムのセクタ数
-	mov cx, 0x0002
-	mov dh, 0x00
-	mov dl, [BOOT.DRIVE]
-	mov bx, BOOT_LOAD + SECT_SIZE ; 次のロードアドレス
-	int 0x13
+	; 残りのセクタを全て読み込む
+	mov bx, BOOT_SECT - 1
+	mov cx, BOOT_LOAD + SECT_SIZE
+	cdecl read_chs, BOOT, bx, cx
+	cmp ax, bx
 .10Q:
 	jnc .10E
 .10T:
@@ -38,28 +35,72 @@ ipl:
 .s0 db "Booting...", 0x0A, 0x0D, 0
 .e0 db "Error:sector read", 0
 
+; ブートドライブに関する情報
 ALIGN 2, db 0
 BOOT:
-.DRIVE: dw 0 ; ドライブ番号
+	istruc drive
+		at drive.no, dw 0
+		at drive.cyln, dw 0
+		at drive.head, dw 0
+		at drive.sect, dw 2
+	iend
 
 ; モジュール
 %include "./src/modules/real/puts.asm"
 %include "./src/modules/real/reboot.asm"
+%include "./src/modules/real/read_chs.asm"
 
 ; 先頭512バイトの残りを埋める
 	times 510 - ($ - $$) db 0x00
 	db 0x55, 0xAA
 
 ; リアルモード時に取得した情報
+; 二番目のセクタの先頭で保持する
 FONT:
 .seg dw 0
 .off dw 0
 
 ; モジュール（先頭512バイト以降で利用）
-%include	"./src/modules/real/itoa.asm"
-%include	"./src/modules/real/get_font_adr.asm"
+%include "./src/modules/real/itoa.asm"
+%include "./src/modules/real/get_drive_param.asm"
+%include "./src/modules/real/get_font_adr.asm"
+%include "./src/modules/real/lba_chs.asm"
+%include "./src/modules/real/read_lba.asm"
 
 stage_2:
+	cdecl puts, .s0
+	; ドライブ情報を取得
+	cdecl get_drive_param, BOOT
+	cmp ax, 0
+.10Q:
+	jne .10E
+.10T:
+	cdecl puts, .e0
+	call reboot
+.10E:
+	; ドライブ情報を表示
+	mov	ax, [BOOT + drive.no] ; AX = ブートドライブ;
+	cdecl itoa, ax, .p1, 2, 16, 0b0100
+	mov	ax, [BOOT + drive.cyln]
+	cdecl itoa, ax, .p2, 4, 16, 0b0100
+	mov	ax, [BOOT + drive.head]	; AX = ヘッド数;
+	cdecl itoa, ax, .p3, 2, 16, 0b0100
+	mov	ax, [BOOT + drive.sect]	; AX = トラックあたりのセクタ数;
+	cdecl itoa, ax, .p4, 2, 16, 0b0100
+	cdecl puts, .s1
+
+	jmp	stage_3
+
+.s0		db	"2nd stage...", 0x0A, 0x0D, 0
+.s1		db	" Drive:0x"
+.p1		db	"  , C:0x"
+.p2		db	"    , H:0x"
+.p3		db	"  , S:0x"
+.p4		db	"  ", 0x0A, 0x0D, 0
+
+.e0		db	"Can't get drive parameter.", 0
+
+stage_3:
 	cdecl puts, .s0
 	; BIOSに内蔵されたフォントをプロテクトモード時に利用する
 	cdecl get_font_adr, FONT
@@ -67,13 +108,47 @@ stage_2:
 	cdecl itoa, word [FONT.seg], .p1, 4, 16, 0b0100
 	cdecl itoa, word [FONT.off], .p2, 4, 16, 0b0100
 	cdecl puts, .s1
-	jmp stage_3
+	jmp stage_4
 
-.s0 db "2nd stage...", 0x0A, 0x0D, 0
+.s0 db "3rd stage...", 0x0A, 0x0D, 0
 .s1: db " Font Address = "
 .p1: db "ZZZZ:"
 .p2: db "ZZZZ", 0x0A, 0x0D, 0
 	db 0x0A, 0x0D, 0
+
+stage_4:
+	cdecl puts, .s0
+.10L:
+	; ユーザーからの入力待ち
+	mov ah, 0x00
+	int 0x16
+	cmp al, ' '
+	jne .10L
+
+	; ビデオモードの設定
+	mov ax, 0x0012
+	int 0x10
+
+	jmp stage_5
+
+.s0 db "4th stage...", 0x0A, 0x0D, 0x0A, 0x0D
+	db " [Push SPACE key to protect mode...]", 0x0A, 0x0D, 0
+
+stage_5:
+	cdecl puts, .s0
+	; カーネルを読み込む
+	cdecl read_lba, BOOT, BOOT_SECT, KERNEL_SECT, BOOT_END
+	cmp ax, KERNEL_SECT
+.10Q:
+	jz .10E
+.10T:
+	cdecl puts, .e0
+	call reboot
+.10E:
+	jmp stage_6
+
+.s0 db "5th stage...", 0x0A, 0x0D, 0
+.e0 db " Failure load kernel...", 0x0A, 0x0D, 0
 
 ALIGN 4, db 0
 GDT: dq	0x00_0_0_0_0_000000_0000 ; NULL
@@ -93,8 +168,7 @@ GDTR: dw GDT.gdt_end - GDT - 1 ; ディスクリプタテーブルのリミッ�
 IDTR: dw 0 ; idt_limit
 	 dd 0 ; idt location
 
-stage_3:
-	cdecl puts, .s0
+stage_6:
 	cli
 
 	; GDTの設定
@@ -111,8 +185,6 @@ stage_3:
 [BITS 32]
 	DB 0x66 ; オペランドサイズオーバーライドプレフィックス
 	jmp SEL_CODE:CODE_32
-
-.s0 db "3rd stage...", 0x0A, 0x0D, 0
 
 ; 32ビットコード開始
 CODE_32:
@@ -134,6 +206,6 @@ CODE_32:
 	; カーネル処理に移行
 	jmp	KERNEL_LOAD ; カーネルの先頭にジャンプ
 
-; ブートプログラムの残りを埋める
+    ; ブートプログラムの残りを埋める
 	times BOOT_SIZE - ($ - $$) db 0
 
